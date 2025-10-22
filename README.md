@@ -85,7 +85,7 @@ Open Questions:
 
 ### Lifecycle of membership changes
 
-#### Bootstrap ([UML code](#uml-code-for-bootstrap))
+#### Bootstrap ([UML code](uml-code-for-bootstrap))
 
 ![Bootstrap](assets/ClusterBootstrap.png)
 
@@ -100,36 +100,36 @@ New nodes establish connection between each other via the `shard-nodes` config w
 When the node is connected to majority of the nodes.
 
 
-#### Node addition
+#### Node addition([UML Code](#uml-code-for-node-addition))
 
 ![Node Addition](assets/NodeAddition.png)
 
-####  Primary removal (Manual Failover)
+####  Primary removal ([UML Code](#uml-code-for-primary-removal))
 
 ![Primary Removal](assets/PrimaryRemoval.svg)
 
-#### Replica removal / failure
+#### Replica removal / failure ([UML Code](#uml-code-for-replica-removal))
 
 ![Replica Removal](assets/ReplicaRemoval.svg)
 
-#### Primary Failure (Automatic Failover)
+#### Primary Failure (Automatic Failover) ([UML Code](#uml-code-for-primary-failure))
 
 ![PrimaryFailure](assets/PrimaryFailure.svg)
 
 * * *
 
-### Leader liveness
+### Leader liveness ([UML Code](#uml-code-for-leader-liveness))
 ![Lifecycle of heartbeat](assets/Heartbeat.png)
 
-### Lifecycle of a write command 
+### Lifecycle of a write command ([UML Code](#UML code for lifecycle of a write command))
 
 ![Lifecycle of a write command](assets/WriteCommand.png)
 
-### Lifecycle of a read command 
+### Lifecycle of a read command ([UML Code](#UML code for lifecycle of a read command))
 
 ![Read Command](assets/ReadCommand.png)
 
-### Write outage
+### Write outage ([UML Code](#uml-code-for-write-outage))
 
 Write failure in a shard can be observed when quorum isn’t possible to reach for a write operation.
 
@@ -547,11 +547,11 @@ end
 
 </details>
 
-### UML code for write outage scenario
+### UML code for write outage
 
 <details>
 
-<summary>UML code for write outage scenario</summary>
+<summary>UML code for write outage</summary>
 
 ```
 @startuml
