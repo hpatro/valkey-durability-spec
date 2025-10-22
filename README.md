@@ -112,7 +112,9 @@ When the node is connected to majority of the nodes.
 
 ![Replica Removal](assets/ReplicaRemoval.svg)
 
-#### 
+#### Primary Failure (Automatic Failover)
+
+![PrimaryFailure](assets/PrimaryFailure.svg)
 
 * * *
 
@@ -470,7 +472,6 @@ note over R3: Node R3 removed from cluster\nand can be safely shut down
 </details>
 
 <details>
-
 <summary>UML code for Primary Removal</summary>
 
 ```
@@ -509,6 +510,63 @@ R2L <- R2: Write config-change entry
 R2 --> R1: Ack
 R1 -> R1L: Commit new configuration
 note over R1,R2: New leader R1 committed config\nexclud
+```
+
+</details>
+
+<details>
+
+<summary>UML code for Primary Failure</summary>
+```
+@startuml
+actor Client
+participant "Primary (down)" as P
+participant "Replica 1" as R1
+participant "Replica 2" as R2
+database "Primary Log" as PL
+database "Replica 1 Log" as R1L
+database "Replica 2 Log" as R2L
+
+== Normal Operation ==
+P -> R1: AppendEntries (heartbeat)
+P -> R2: AppendEntries (heartbeat)
+R1 --> P: Ack
+R2 --> P: Ack
+note over P,R2: Cluster stable under P as leader
+
+== Phase 1: Failure Detection ==
+P -[#red]-> X: Primary crash / network loss
+R1 -> R1: Detect missing heartbeat
+R2 -> R2: Detect missing heartbeat
+note over R1,R2: Election timeout exceeded\nNo heartbeat received from leader
+
+== Phase 2: Election Start ==
+R1 -> R1: Increment term, state=candidate
+R1 -> R2: RequestVote(term+1, lastLogIndex)
+R2 -> R2L: Compare logs, vote if up-to-date
+R2 --> R1: VoteGranted
+
+== Phase 3: Leader Election ==
+R1 -> R1: Votes received (majority)\nBecome new leader
+note over R1,R2: New leader = R1\nTerm incremented
+
+== Phase 4: Log Consistency Check ==
+R1 -> R2: AppendEntries (no-op heartbeat)\nEnsure log alignment
+R2 --> R1: Ack
+
+== Phase 5: Cluster Recovery ==
+Client -> R1: Redirected write request
+R1 -> R1L: Append log entry
+R1 -> R2: Replicate log entry
+R2 --> R1: Ack
+R1 -> R1L: Commit entry
+note over R1,R2: Cluster recovered under new leader R1
+
+== Phase 6: Old Leader Returns ==
+P -> R1: AppendEntries(term=old)
+R1 --> P: Reject (term stale)
+note over R1,P: Old leader demoted automatically\nStale term rejected
+@enduml
 ```
 
 </details>
