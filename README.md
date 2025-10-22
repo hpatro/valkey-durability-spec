@@ -16,13 +16,13 @@ Please refer [https://github.com/valkey-io/valkey-rfc/pull/29/](https://github.c
 * Configurable isolation level 
     * Read committed 
 * Maintain same deployment architecture
-* Support standalone 
-* Support 1 Primary and 2 Replica 
+* Support standalone/cluster(single shard) 
+* Support 1 Primary and 2 Replica(s) 
 
 Not targeting P0 but planned for future deliverable:
 
 * Dirty reads
-* Cluster-enabled support for scalability
+* Multi shard support for scalability
 * Support 1 primary and 1 replica in a shard
 
 ## High Level Approach
@@ -61,13 +61,9 @@ Modifies the data on in-memory view of primary first and then does the durable o
 1. Blocks the key for both read/write operation until the operation has been durably stored across the shard.
 2. Failover on failure write operation going through.
 
-
-Command Execution 
-* * *
-
 ## How to structure the durably logging component in Valkey?
 
-### Durable engine embedded within Valkey (Recommended)
+### Durable engine embedded within Valkey
 
 ![Single Shard View](https://github.com/user-attachments/assets/c01bc808-9811-450c-a143-ee9eedf0b0a3)
 
@@ -81,13 +77,17 @@ Command Execution
 1. Requires building synchronous replication or quorum based replication system.
 2. More overlap of asynchronous replication and synchronous replication system.
 
+Open Questions:
+
+1. Do we consider an approach of P0 allowing the logging component to be available as in-memory temporary log instead of maintaining it on disk? This mechanism would allow higher throughput.
+
 ## Workflows
 
 ### Lifecycle of membership changes
 
 #### Bootstrap
 
-![Bootstrap](https://github.com/user-attachments/assets/8d2a20df-bb81-42a8-b10c-e6fc937f1d51)
+![Bootstrap](assets/ClusterBootstrap.png)
 
 ##### Points to consider:
 
@@ -100,69 +100,9 @@ New nodes establish connection between each other via the `shard-nodes` config w
 When the node is connected to majority of the nodes.
 
 
-<details>
-
-<summary>UML code for bootstrap</summary>
-
-```
-@startuml
-participant "NodeA" as A
-participant "NodeB" as B
-participant "NodeC" as C
-database "NodeA Log" as AL
-database "NodeB Log" as BL
-database "NodeC Log" as CL
-
-note over A,C: All nodes load shard-nodes from config
-A -> A: shard-nodes = {A,B,C}
-B -> B: shard-nodes = {A,B,C}
-C -> C: shard-nodes = {A,B,C}
-
-A -> B: Connect
-B --> A: ACK
-A -> C: Connect
-C --> A: ACK
-B -> C: Connect
-C --> B: ACK
-
-note over A,C: All nodes know each other
-
-note over A,C: All nodes start as followers
-A -> A: Start as Follower (term=0)
-B -> B: Start as Follower (term=0)
-C -> C: Start as Follower (term=0)
-
-note over A: Election Timeout
-A -> A: Election timeout
-A -> A: Become Candidate (term=1)\nVote for self
-
-note over A: Request Votes
-A -> B: RequestVote(term=1)
-B --> A: VoteGranted
-A -> C: RequestVote(term=1)
-C --> A: VoteGranted
-
-
-A -> A: Become Leader
-
-note over A,C
-Leader = NodeA
-Followers = NodeB, NodeC
-end note
-
-A -> A: Now acts as Primary (P)
-B -> B: Now acts as Replica 1 (R1)
-C -> C: Now acts as Replica 2 (R2)
-
-@enduml
-```
-
-</details>
-
-
 #### Node addition
 
-![Node Addition](https://github.com/user-attachments/assets/a305c4ab-f429-4c2d-9a39-32287bbaa005)
+![Node Addition](assets/NodeAddition.png)
 
 <details>
 
@@ -236,16 +176,16 @@ end note
 
 ####  Primary removal
 
-#### Replica removal
+#### Replica removal / failure
 
-#### Primary failure
+![Replica Removal](assets/ReplicaRemoval.svg)
 
-#### Replica failure
+#### 
 
 * * *
 
 ### Leader liveness
-![Lifecycle of heartbeat](https://github.com/user-attachments/assets/0a9af0de-10b7-4947-b0e1-1b6d57a0e1f9)
+![Lifecycle of heartbeat](assets/Heartbeat.png)
 
 <details>
 
@@ -278,7 +218,7 @@ end
 
 ### Lifecycle of a write command 
 
-![Lifecycle of a write command](https://github.com/user-attachments/assets/f163e15e-9d5d-4b01-b24c-1b45a50c2dc4)
+![Lifecycle of a write command](assets/WriteCommand.png)
 
 <details>
 
@@ -322,7 +262,7 @@ note over P, R2: All have the same view for key K
 
 ### Lifecycle of a read command 
 
-<img width="643" height="566" alt="image" src="https://github.com/user-attachments/assets/2d1f4344-791c-440f-9426-fa08f96d0997" />
+![Read Command](assets/ReadCommand.png)
 
 <details>
 
@@ -356,7 +296,7 @@ end
 
 Write failure in a shard can be observed when quorum isn’t possible to reach for a write operation.
 
-![Write Outage](https://github.com/user-attachments/assets/58c032f1-36e0-4552-9d51-388a85b3ca45)
+![Write Outage](assets/CompleteWriteOutage.png)
 
 <details>
 
@@ -424,6 +364,63 @@ No impact on ACL
 
 * Name: `shard-nodes` Value: Multiple ip address and port (comma separated)
 
-
 ## Appendix
 
+<details>
+
+<summary>UML code for bootstrap</summary>
+
+```uml
+@startuml
+participant "NodeA" as A
+participant "NodeB" as B
+participant "NodeC" as C
+database "NodeA Log" as AL
+database "NodeB Log" as BL
+database "NodeC Log" as CL
+
+note over A,C: All nodes load shard-nodes from config
+A -> A: shard-nodes = {A,B,C}
+B -> B: shard-nodes = {A,B,C}
+C -> C: shard-nodes = {A,B,C}
+
+A -> B: Connect
+B --> A: ACK
+A -> C: Connect
+C --> A: ACK
+B -> C: Connect
+C --> B: ACK
+
+note over A,C: All nodes know each other
+
+note over A,C: All nodes start as followers
+A -> A: Start as Follower (term=0)
+B -> B: Start as Follower (term=0)
+C -> C: Start as Follower (term=0)
+
+note over A: Election Timeout
+A -> A: Election timeout
+A -> A: Become Candidate (term=1)\nVote for self
+
+note over A: Request Votes
+A -> B: RequestVote(term=1)
+B --> A: VoteGranted
+A -> C: RequestVote(term=1)
+C --> A: VoteGranted
+
+
+A -> A: Become Leader
+
+note over A,C
+Leader = NodeA
+Followers = NodeB, NodeC
+end note
+
+A -> A: Now acts as Primary (P)
+B -> B: Now acts as Replica 1 (R1)
+C -> C: Now acts as Replica 2 (R2)
+
+@enduml
+```
+
+</details>
