@@ -85,7 +85,7 @@ Open Questions:
 
 ### Lifecycle of membership changes
 
-#### Bootstrap
+#### Bootstrap ([UML code](#uml-code-for-bootstrap))
 
 ![Bootstrap](assets/ClusterBootstrap.png)
 
