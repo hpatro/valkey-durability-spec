@@ -85,19 +85,16 @@ Open Questions:
 
 ### Lifecycle of membership changes
 
-#### Bootstrap ([UML code](uml-code-for-bootstrap))
+#### Bootstrap ([UML code](#uml-code-for-bootstrap))
 
 ![Bootstrap](assets/ClusterBootstrap.png)
 
 ##### Points to consider:
 
-> How to discover peer nodes?
-
-New nodes establish connection between each other via the `shard-nodes` config which is a list of ip:port address.
-
-> When to start the initialization phase?
-
-When the node is connected to majority of the nodes.
+* How to discover peer nodes?
+  * New nodes establish connection between each other via the `shard-nodes` config which is a list of ip:port address.
+* When to start the initialization phase?
+  * When the node is connected to majority of the nodes.
 
 
 #### Node addition([UML Code](#uml-code-for-node-addition))
