@@ -4,34 +4,52 @@ This document is a working draft of the high level architecture of durability an
 
 ## Problem Statement
 
-Valkey is an in-memory data store designed for high performance. However, this creates challenges for durability. By default, all the data resides in memory which means it can be lost during crashes or process restarts. Although Valkey provides mechanisms such as periodic snapshots (RDB) and append-only logs (AOF) to persist data to disk, these approaches involve trade-offs between performance and reliability. Snapshots may lose recent writes and AOF is only applicable to node level durability with it’s own quirks. Also, with a failover operation in cluster mode, data can be lost by promoting a replica which might be out-of-sync which also leads to data loss. There is a client side mechanism of `WAIT` operation to block other operations until the data gets synced across replica(s) which requires client side orchestration and isn’t intuitive.
+Valkey is an in-memory data store designed for high performance. Valkey currently uses an asynchronous replication model for high throughput and low latency, which means writes acknowledged to clients may be lost if replicas lag, crash, or are promoted while out-of-sync. Because all data resides in memory by default, process restarts or crashes risk losing recent writes. Although periodic snapshots (RDB) and append-only logs (AOF) provide persistence, they entail trade-offs: snapshots may omit recent writes and AOF only supports single-node durability. In cluster mode, data loss remains possible when a replica is promoted prematurely. Shifting durability responsibility to clients (via WAIT) is not intuitive and places burden on the application layer.
 
-In order to tackle all these problem around durability, it needs to be thought from ground up and build the system to be tolerant against node failure, topology changes, etc and the durability guarantee to be completely managed by the engine.
+## Motivation
+
+While Valkey’s asynchronous model prioritizes performance, many production workloads demand stronger guarantees where acknowledged writes will never be lost, even under failures. This specification introduces a unified durability layer that defines when a write is truly “safe” ensures deterministic behavior during failover, and simplifies client integration by removing the need for ad-hoc mechanisms like `WAIT`.
+
+To achieve this, the specification adopts a formally defined state machine replication model, namely [RAFT](https://en.wikipedia.org/wiki/Raft_(algorithm)), making the guarantees explicit and verifiable acting as a precise contract between the system and its users.
 
 ## Requirements
 
 Please refer [https://github.com/valkey-io/valkey-rfc/pull/29/](https://github.com/valkey-io/valkey-rfc/pull/29/files) for detailed requirements
 
-* Server level durability configuration
-* Configurable isolation level 
-    * Read committed 
-* Maintain same deployment architecture
-* Support standalone/cluster(single shard) 
-* Support 1 Primary and 2 Replica(s) 
+* Server level durability configuration - Valkey must allow enabling/disabling durability mode at startup.
+* Read Committed isolation level - Every write operation is serialized on primary and client won't see a volatile key.
+* Maintain current deployment architecture - No additional dependencies.
+* Support standalone/cluster(single shard) modes.  
+* Support a minimum 3 node configuration - one primary and two (or more) replicas.
 
-Not targeting P0 but planned for future deliverable:
+Planned for future:
 
-* Dirty reads
-* Multi shard support for scalability
-* Support 1 primary and 1 replica in a shard
+* Dirty reads and configurable isolation level
+* Multi shard durability - Allow scaling of writes.
+* Two node durability configuration (one primary and one replica)
 
-## High Level Approach
+## Design Overview
 
-There are a few major parts to Valkey in terms of adding durability support.
+The durability specification introduces a **RAFT-based state machine replication** model at the shard level, ensuring deterministic leadership, consistent log replication, and predictable recovery across Valkey cluster. Each shard operates as an independent group consisting of one leader (primary) and multiple followers (replicas).
+All write operations flow through the primary and are durably replicated before being acknowledged.
+Replication and election are handled at shard granularity, ensuring fault isolation and predictable recovery. A write is considered durable once it has been replicated to a quorum of nodes and safely committed in the leader’s log. Acknowledged writes are guaranteed to survive any single-node or minority failure.
 
-1. Durability logging
-2. Command execution
-3. Topology changes
+![Write Request Overview](assets/Overview.svg)
+
+Elections are managed using RAFT’s randomized timeout and term-based voting mechanism, ensuring that at any point, only one valid leader can exist per shard. Followers that fall behind automatically catch up through incremental log replication. 
+
+### Key Components
+
+There are a few major parts to Valkey to be modified to add durability support.
+
+1. Command execution
+2. Blocking
+3. Logging
+4. Topology changes
+
+### Command Execution
+
+Valkey has a single thread core execution layer where each operation is executed serially. As each operation is quite fast (in nanoseconds)
 
 ### Write-ahead logging
 
@@ -42,14 +60,14 @@ Writes out the command to be executed durably across the system and then execute
 1. Opt to blocking of read operation on modified key(s).
 2. If the durable operation fails, there is no dirty data to cleanup on the primary and the operation can be retried.
 
-Con(s)
+#### Con(s)
 
 1. Commands with random operation like `SPOP` and Lua scripts without predefined keys can’t be handled.
 2. Commands with blocking operation needs special handling.
 
 ### Write-behind logging (Recommended)
 
-Modifies the data on in-memory view of primary first and then does the durable operation across the system.
+Modifies the data on in-memory view of primary first and then performs the logging operation across a quorum of nodes.
 
 #### Pro(s)
 
