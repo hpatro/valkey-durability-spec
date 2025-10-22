@@ -49,7 +49,32 @@ There are a few major parts to Valkey to be modified to add durability support.
 
 ### Command Execution
 
-Valkey has a single thread core execution layer where each operation is executed serially. As each operation is quite fast (in nanoseconds)
+All write commands are routed to the shard leader (primary), which serves as the serialization point for that shard.
+ The leader ensures serializable execution by processing commands in the exact order they are received, establishing a single total sequence for all writes.
+
+Upon receiving a write:
+
+1. The leader applies the command to its local in-memory state immediately, ensuring fast execution.
+2. The corresponding log entry is appended to the RAFT log and replicated asynchronously to follower nodes.
+3. The client response is blocked until quorum acknowledgment confirms that the entry is durably replicated and committed.
+
+This design allows the system to continue command execution and replication in parallel, while ensuring that clients only receive success once durability is guaranteed.
+ If the leader fails before quorum commit, uncommitted entries are rolled back or overwritten during recovery.
+ Followers apply committed entries strictly in log index order, ensuring deterministic state across replicas.
+
+### Blocking
+
+Blocking determines when a client receives acknowledgment for an operation relative to its durability state.
+ While the leader applies a command immediately to its in-memory state, the client response is held until the entry is confirmed by the configured durability mode. This ensures that acknowledgment semantics always reflect the intended durability guarantees. The client remains blocked until a quorum of replicas (**synchronous mode**) acknowledges the log entry, guaranteeing durability against minority or single-node failures.
+
+Blocking occurs only at the primary. Replica nodes apply entries passively as they are received and do not block client operations directly.
+Read operations and other non-durable commands are not affected by blocking behavior.
+
+Notes:
+We could make the blocking mode configurable in the future and introduce two additional modes:
+
+- **Asynchronous mode:** The client receives acknowledgment immediately after the leader applies the command locally. This mode prioritizes latency over durability.
+- **Semi-synchronous mode:** The client is unblocked once at least one replica acknowledges the log entry, providing a balance between durability and performance.
 
 ### Write-ahead logging
 
