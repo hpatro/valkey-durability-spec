@@ -121,154 +121,19 @@ When the node is connected to majority of the nodes.
 ### Leader liveness
 ![Lifecycle of heartbeat](assets/Heartbeat.png)
 
-<details>
-
-<summary>UML code for heartbeat</summary>
-
-```
-@startuml
-actor Client
-participant "Primary" as P
-participant "Replica 1" as R1
-participant "Replica 2" as R2
-database "Primary Log" as PL
-database "Replica 1 Log" as R1L
-database "Replica 2 Log" as R2L
-
-autonumber
-note over P: No new writes from client
-
-loop Heartbeat interval (e.g. 150–300 ms)
-  P -> R1: Heartbeat (empty AppendEntries)
-  P -> R2: Heartbeat (empty AppendEntries)
-  R1 -> P: Heartbeat ACK
-  R2 -> P: Heartbeat ACK
-  note over R1, R2: Followers reset election timeout
-end
-@enduml
-```
-
-</details>
-
 ### Lifecycle of a write command 
 
 ![Lifecycle of a write command](assets/WriteCommand.png)
 
-<details>
-
-<summary>UML code for lifecycle of a write command</summary>
-
-```
-@startuml
-actor Client
-participant "Primary" as P
-participant "Replica 1" as R1
-participant "Replica 2" as R2
-database "Primary Log" as PL
-database "Replica 1 Log" as R1L
-database "Replica 2 Log" as R2L
-
-autonumber
-Client -> P: Write operation on key K
-P -> P: Execute operation
-note right of P: Block key K
-P -> PL: Durably log operation
-P -> P: Add to durable stream
-note right of P: After certain period/operations
-P -> R1: Replicate operations
-P -> R2: Replicate operations
-R1 -> R1L: Durably log operation
-R2 -> R2L: Durably log operation
-R1 -> P: Acknowledge up to offset
-note right of P: Have quorum upto offset X
-P -> Client: Write response
-P -> R2 : Acknowledge up to X offset
-P -> R1: Update offset committed to X
-R1 -> R1: Execute operation
-note over P, R1: Same view across Primary and Replica 1
-P -> R2: Update offset committed to X
-R2 -> R2: Execute operation
-note over P, R2: All have the same view for key K
-@enduml
-```
-
-</details>
-
 ### Lifecycle of a read command 
 
 ![Read Command](assets/ReadCommand.png)
-
-<details>
-
-<summary>UML code for lifecycle of a read command</summary>
-
-```
-@startuml
-actor Client
-participant "Primary" as P
-participant "Replica 1" as R1
-participant "Replica 2" as R2
-
-autonumber
-Client -> P: Read operation on key K
-P -> P: Verify if the key is blocked for operation
-alt Blocked
-  P -> P: Block the client
-  ... wait until unblocked ...
-  P -> P: Unblock client
-  P -> P: Execute the operation
-  P -> Client: Write response
-else Not Blocked
-  P -> P: Execute the operation
-  P -> Client: Write response
-end
-@enduml
-```
-</details>
 
 ### Write outage
 
 Write failure in a shard can be observed when quorum isn’t possible to reach for a write operation.
 
 ![Write Outage](assets/CompleteWriteOutage.png)
-
-<details>
-
-<summary>UML code for write outage scenario</summary>
-
-```
-@startuml
-actor Client
-participant "Primary" as P
-participant "Replica 1" as R1
-participant "Replica 2" as R2
-database "Primary Log" as PL
-database "Replica 1 Log" as R1L
-database "Replica 2 Log" as R2L
-
-autonumber
-Client -> P: Write operation on key K
-P -> P: Execute operation
-note right of P: Block key K
-P -> PL: Durably log operation
-P -> P: Add to durable stream
-note right of P: After certain period/operations
-P -> R1: Replicate operations
-P -> R2: Replicate operations
-note over R1: Replica 1 down
-note over R2: Replica 2 down
-P -> P: Timeout waiting for replica acknowledgments
-P -> P: Detect both replicas are down
-P -> P: Keep key K blocked
-note right of P: Key K remains blocked until replicas recover
-Client-x P: Timeout
-Client-> P: Write operation on key K
-P -> P: Key K is blocked
-note over P: Operator involvement required for failover/recover
-@enduml
-```
-
-</details>
 
 ### Cluster
 
@@ -299,6 +164,8 @@ No impact on ACL
 * Name: `shard-nodes` Value: Multiple ip address and port (comma separated)
 
 ## Appendix
+
+### UML code for bootstrap
 
 <details>
 
@@ -359,8 +226,9 @@ C -> C: Now acts as Replica 2 (R2)
 
 </details>
 
-<details>
+### UML code for Node Addition
 
+<details>
 <summary>UML code for Node Addition</summary>
 
 ```
@@ -429,9 +297,10 @@ end note
 
 </details>
 
-<details>
+### UML code for Replica Removal
 
-<summary>UML code for Replica removal</summary>
+<details>
+<summary>UML code for Replica Removal</summary>
 
 ```
 @startuml
@@ -470,6 +339,8 @@ note over R3: Node R3 removed from cluster\nand can be safely shut down
 @enduml
 ```
 </details>
+
+### UML code for Primary Removal
 
 <details>
 <summary>UML code for Primary Removal</summary>
@@ -514,9 +385,11 @@ note over R1,R2: New leader R1 committed config\nexclud
 
 </details>
 
-<details>
+### UML code for Primary Failure
 
+<details>
 <summary>UML code for Primary Failure</summary>
+
 ```
 @startuml
 actor Client
@@ -571,3 +444,145 @@ note over R1,P: Old leader demoted automatically\nStale term rejected
 
 </details>
 
+### UML code for Leader Liveness
+
+<details>
+<summary>UML code for Leader Liveness</summary>
+
+```
+@startuml
+actor Client
+participant "Primary" as P
+participant "Replica 1" as R1
+participant "Replica 2" as R2
+database "Primary Log" as PL
+database "Replica 1 Log" as R1L
+database "Replica 2 Log" as R2L
+
+autonumber
+note over P: No new writes from client
+
+loop Heartbeat interval (e.g. 150–300 ms)
+  P -> R1: Heartbeat (empty AppendEntries)
+  P -> R2: Heartbeat (empty AppendEntries)
+  R1 -> P: Heartbeat ACK
+  R2 -> P: Heartbeat ACK
+  note over R1, R2: Followers reset election timeout
+end
+@enduml
+```
+
+</details>
+
+### UML code for lifecycle of a write command
+
+<details>
+
+<summary>UML code for lifecycle of a write command</summary>
+
+```
+@startuml
+actor Client
+participant "Primary" as P
+participant "Replica 1" as R1
+participant "Replica 2" as R2
+database "Primary Log" as PL
+database "Replica 1 Log" as R1L
+database "Replica 2 Log" as R2L
+
+autonumber
+Client -> P: Write operation on key K
+P -> P: Execute operation
+note right of P: Block key K
+P -> PL: Durably log operation
+P -> P: Add to durable stream
+note right of P: After certain period/operations
+P -> R1: Replicate operations
+P -> R2: Replicate operations
+R1 -> R1L: Durably log operation
+R2 -> R2L: Durably log operation
+R1 -> P: Acknowledge up to offset
+note right of P: Have quorum upto offset X
+P -> Client: Write response
+P -> R2 : Acknowledge up to X offset
+P -> R1: Update offset committed to X
+R1 -> R1: Execute operation
+note over P, R1: Same view across Primary and Replica 1
+P -> R2: Update offset committed to X
+R2 -> R2: Execute operation
+note over P, R2: All have the same view for key K
+@enduml
+```
+
+</details>
+
+### UML code for lifecycle of a read command
+
+<details>
+
+<summary>UML code for lifecycle of a read command</summary>
+
+```
+@startuml
+actor Client
+participant "Primary" as P
+participant "Replica 1" as R1
+participant "Replica 2" as R2
+
+autonumber
+Client -> P: Read operation on key K
+P -> P: Verify if the key is blocked for operation
+alt Blocked
+  P -> P: Block the client
+  ... wait until unblocked ...
+  P -> P: Unblock client
+  P -> P: Execute the operation
+  P -> Client: Write response
+else Not Blocked
+  P -> P: Execute the operation
+  P -> Client: Write response
+end
+@enduml
+```
+
+</details>
+
+### UML code for write outage scenario
+
+<details>
+
+<summary>UML code for write outage scenario</summary>
+
+```
+@startuml
+actor Client
+participant "Primary" as P
+participant "Replica 1" as R1
+participant "Replica 2" as R2
+database "Primary Log" as PL
+database "Replica 1 Log" as R1L
+database "Replica 2 Log" as R2L
+
+autonumber
+Client -> P: Write operation on key K
+P -> P: Execute operation
+note right of P: Block key K
+P -> PL: Durably log operation
+P -> P: Add to durable stream
+note right of P: After certain period/operations
+P -> R1: Replicate operations
+P -> R2: Replicate operations
+note over R1: Replica 1 down
+note over R2: Replica 2 down
+P -> P: Timeout waiting for replica acknowledgments
+P -> P: Detect both replicas are down
+P -> P: Keep key K blocked
+note right of P: Key K remains blocked until replicas recover
+Client-x P: Timeout
+Client-> P: Write operation on key K
+P -> P: Key K is blocked
+note over P: Operator involvement required for failover/recover
+@enduml
+```
+
+</details>
