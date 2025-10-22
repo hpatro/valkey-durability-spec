@@ -97,13 +97,11 @@ Modifies the data on in-memory view of primary first and then performs the loggi
 
 Open Questions:
 
-1. Do we consider an approach of P0 allowing the logging component to be available as in-memory temporary log instead of maintaining it on disk? This mechanism would allow higher throughput.
+1. Should we consider an approach for initial release to allow the logging component to be available as in-memory instead of maintaining it on disk? This mechanism would allow higher throughput. Need to ponder about the risks/recovery time.
 
 ## Workflows
 
-### Lifecycle of membership changes
-
-#### Bootstrap ([UML code](#uml-code-for-bootstrap))
+### Cluster Bootstrap ([UML code](#uml-code-for-bootstrap))
 
 ![Bootstrap](assets/ClusterBootstrap.png)
 
@@ -114,27 +112,17 @@ Open Questions:
 * When to start the initialization phase?
   * When the node is connected to majority of the nodes.
 
-
-#### Node addition([UML Code](#uml-code-for-node-addition))
+### Node addition([UML Code](#uml-code-for-node-addition))
 
 ![Node Addition](assets/NodeAddition.png)
 
-####  Primary removal ([UML Code](#uml-code-for-primary-removal))
+### Primary removal ([UML Code](#uml-code-for-primary-removal))
 
 ![Primary Removal](assets/PrimaryRemoval.svg)
 
-#### Replica removal / failure ([UML Code](#uml-code-for-replica-removal))
+### Replica removal ([UML Code](#uml-code-for-replica-removal))
 
 ![Replica Removal](assets/ReplicaRemoval.svg)
-
-#### Primary Failure (Automatic Failover) ([UML Code](#uml-code-for-primary-failure))
-
-![PrimaryFailure](assets/PrimaryFailure.svg)
-
-* * *
-
-### Leader liveness ([UML Code](#uml-code-for-leader-liveness))
-![Lifecycle of heartbeat](assets/Heartbeat.png)
 
 ### Lifecycle of a write command ([UML Code](#uml-code-for-lifecycle-of-a-write-command))
 
@@ -144,9 +132,23 @@ Open Questions:
 
 ![#UML-code-for-lifecycle-of-a-read-command](assets/ReadCommand.png)
 
-### Write outage ([UML Code](#uml-code-for-write-outage))
+## Failure Modes
 
-Write failure in a shard can be observed when quorum isn’t possible to reach for a write operation.
+### Primary liveness ([UML Code](#uml-code-for-leader-liveness))
+
+![Lifecycle of heartbeat](assets/Heartbeat.png)
+
+### Primary Failure (Automatic Failover) ([UML Code](#uml-code-for-primary-failure))
+
+![PrimaryFailure](assets/PrimaryFailure.svg)
+
+### Replica Failure
+
+Has the same behavior as replica removal outlined earlier in the topology change section.
+
+### Complete Write Outage ([UML Code](#uml-code-for-write-outage))
+
+Complete write outage in a shard can be observed when quorum isn’t possible to reach for a write operation. This could be due to network partition for a period exceeding the timeout period of a client and the operation result couldn't be acknowledged back to the client. This would leave the primary dirty and in an inconsistent state. Hence, it's require
 
 ![Write Outage](assets/CompleteWriteOutage.png)
 
@@ -164,7 +166,7 @@ The **clusterbus** can still be repurposed for topology gossip across shards. Th
 
 ### Asychronous Replication
 
-Asynchronous replication system will co-exist with the synchronous replication system to allow users to use Valkey with high availability but not high durable system. 
+Asynchronous replication system will co-exist with the synchronous replication system to allow users to use Valkey with high availability but not high durable system i.e. backward compatible in terms of performance/behavior.
 
 ### LUA Scripts
 
