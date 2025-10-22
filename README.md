@@ -167,10 +167,6 @@ No impact on ACL
 
 ### UML code for bootstrap
 
-<details>
-
-<summary>UML code for bootstrap</summary>
-
 ```uml
 @startuml
 participant "NodeA" as A
@@ -224,12 +220,7 @@ C -> C: Now acts as Replica 2 (R2)
 @enduml
 ```
 
-</details>
-
 ### UML code for Node Addition
-
-<details>
-<summary>UML code for Node Addition</summary>
 
 ```
 @startuml
@@ -295,12 +286,7 @@ end note
 @enduml
 ```
 
-</details>
-
 ### UML code for Replica Removal
-
-<details>
-<summary>UML code for Replica Removal</summary>
 
 ```
 @startuml
@@ -338,12 +324,7 @@ note over R3: Node R3 removed from cluster\nand can be safely shut down
 == Phase 3: Continue normal operations ==
 @enduml
 ```
-</details>
-
 ### UML code for Primary Removal
-
-<details>
-<summary>UML code for Primary Removal</summary>
 
 ```
 @startuml
@@ -383,12 +364,7 @@ R1 -> R1L: Commit new configuration
 note over R1,R2: New leader R1 committed config\nexclud
 ```
 
-</details>
-
 ### UML code for Primary Failure
-
-<details>
-<summary>UML code for Primary Failure</summary>
 
 ```
 @startuml
@@ -442,12 +418,7 @@ note over R1,P: Old leader demoted automatically\nStale term rejected
 @enduml
 ```
 
-</details>
-
 ### UML code for Leader Liveness
-
-<details>
-<summary>UML code for Leader Liveness</summary>
 
 ```
 @startuml
@@ -472,13 +443,7 @@ end
 @enduml
 ```
 
-</details>
-
 ### UML code for lifecycle of a write command
-
-<details>
-
-<summary>UML code for lifecycle of a write command</summary>
 
 ```
 @startuml
@@ -514,13 +479,7 @@ note over P, R2: All have the same view for key K
 @enduml
 ```
 
-</details>
-
 ### UML code for lifecycle of a read command
-
-<details>
-
-<summary>UML code for lifecycle of a read command</summary>
 
 ```
 @startuml
@@ -545,13 +504,7 @@ end
 @enduml
 ```
 
-</details>
-
 ### UML code for write outage
-
-<details>
-
-<summary>UML code for write outage</summary>
 
 ```
 @startuml
@@ -584,5 +537,3 @@ P -> P: Key K is blocked
 note over P: Operator involvement required for failover/recover
 @enduml
 ```
-
-</details>
