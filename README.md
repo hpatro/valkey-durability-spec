@@ -104,7 +104,9 @@ When the node is connected to majority of the nodes.
 
 ![Node Addition](assets/NodeAddition.png)
 
-####  Primary removal
+####  Primary removal (Manual Failover)
+
+![Primary Removal](assets/PrimaryRemoval.svg)
 
 #### Replica removal / failure
 
@@ -426,7 +428,7 @@ end note
 </details>
 
 <details>
-   
+
 <summary>UML code for Replica removal</summary>
 
 ```
@@ -466,3 +468,48 @@ note over R3: Node R3 removed from cluster\nand can be safely shut down
 @enduml
 ```
 </details>
+
+<details>
+
+<summary>UML code for Primary Removal</summary>
+
+```
+@startuml
+actor Client
+participant "Primary (self-removal)" as P
+participant "Replica 1" as R1
+participant "Replica 2" as R2
+database "Primary Log" as PL
+database "Replica 1 Log" as R1L
+database "Replica 2 Log" as R2L
+
+== Self-Removal Request ==
+Client -> P: CLUSTER REMOVENODE P
+note over P: Detected self-removal request\nand current role = Leader
+
+== Phase 1: Controlled Step-Down ==
+P -> P: Block new client writes
+P -> R1: AppendEntries (final log flush)
+P -> R2: AppendEntries (final log flush)
+R1 --> P: Ack
+R2 --> P: Ack
+P -> P: Set state=follower, increment term\n(new election will start)
+note over P,R2: Leader steps down voluntarily
+
+== Phase 2: New Election ==
+R1 -> R1: Start election (term+1)
+R1 -> R2: RequestVote(term+1)
+R2 --> R1: VoteGranted
+R1 -> R1: Become new leader
+
+== Phase 3: Membership Change ==
+R1 -> R1L: Propose config change\n(remove old leader P)
+R1 -> R2: Replicate config-change entry
+R2L <- R2: Write config-change entry
+R2 --> R1: Ack
+R1 -> R1L: Commit new configuration
+note over R1,R2: New leader R1 committed config\nexclud
+```
+
+</details>
+
