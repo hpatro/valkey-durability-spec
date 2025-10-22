@@ -104,76 +104,6 @@ When the node is connected to majority of the nodes.
 
 ![Node Addition](assets/NodeAddition.png)
 
-<details>
-
-<summary>UML code for Node Addition</summary>
-
-```
-@startuml
-actor Client
-participant "Primary" as P
-participant "Replica 1" as R1
-participant "Replica 2" as R2
-participant "New Replica" as NR
-database "Primary Log" as PL
-database "Replica 1 Log" as R1L
-database "Replica 2 Log" as R2L
-database "New Replica Log" as NRL
-
-== Node Startup ==
-NR -> NR: Start as Follower (term=0)\nNo log, no leader
-NR -> P: CLUSTER ADDNODE <ip> <port>
-
-note over P,NR
-Primary receives join request
-Validates version, role, and cluster membership
-end note
-
-== Phase 1: Add as Learner (Non-Voting Member) ==
-P -> PL: Propose membership change\n(+NR as learner)
-P -> R1: Replicate config change
-P -> R2: Replicate config change
-R1L <- R1: Write config-change entry
-R2L <- R2: Write config-change entry
-R1 --> P: Ack
-R2 --> P: Ack
-P -> PL: Commit new joint configuration
-note over P,NR
-New Replica added as learner (non-voting)
-Cluster = {P,R1,R2,NR(learner)}
-end note
-
-== Phase 2: State Catch-up ==
-P -> NR: Send snapshot / log segments
-NRL <- NR: Apply snapshot and incremental logs
-P -> NR: Continue AppendEntries until caught up
-NR --> P: CaughtUpAck
-note over NR: Learner log state aligned with leader
-
-== Phase 3: Promote to Full Member ==
-P -> PL: Propose membership change\n(promote NR to voter)
-P -> R1: Replicate config change
-P -> R2: Replicate config change
-P -> NR: Replicate config change
-R1L <- R1: Write config-change entry
-R2L <- R2: Write config-change entry
-NRL <- NR: Write config-change entry
-R1 --> P: Ack
-R2 --> P: Ack
-NR --> P: Ack
-P -> PL: Commit final configuration
-note over P,NR
-NR promoted to full voting member
-Cluster = {P,R1,R2,NR}
-end note
-
-== Normal operation continues ==
-
-@enduml
-```
-
-</details>
-
 ####  Primary removal
 
 #### Replica removal / failure
@@ -423,4 +353,116 @@ C -> C: Now acts as Replica 2 (R2)
 @enduml
 ```
 
+</details>
+
+<details>
+
+<summary>UML code for Node Addition</summary>
+
+```
+@startuml
+actor Client
+participant "Primary" as P
+participant "Replica 1" as R1
+participant "Replica 2" as R2
+participant "New Replica" as NR
+database "Primary Log" as PL
+database "Replica 1 Log" as R1L
+database "Replica 2 Log" as R2L
+database "New Replica Log" as NRL
+
+== Node Startup ==
+NR -> NR: Start as Follower (term=0)\nNo log, no leader
+NR -> P: CLUSTER ADDNODE <ip> <port>
+
+note over P,NR
+Primary receives join request
+Validates version, role, and cluster membership
+end note
+
+== Phase 1: Add as Learner (Non-Voting Member) ==
+P -> PL: Propose membership change\n(+NR as learner)
+P -> R1: Replicate config change
+P -> R2: Replicate config change
+R1L <- R1: Write config-change entry
+R2L <- R2: Write config-change entry
+R1 --> P: Ack
+R2 --> P: Ack
+P -> PL: Commit new joint configuration
+note over P,NR
+New Replica added as learner (non-voting)
+Cluster = {P,R1,R2,NR(learner)}
+end note
+
+== Phase 2: State Catch-up ==
+P -> NR: Send snapshot / log segments
+NRL <- NR: Apply snapshot and incremental logs
+P -> NR: Continue AppendEntries until caught up
+NR --> P: CaughtUpAck
+note over NR: Learner log state aligned with leader
+
+== Phase 3: Promote to Full Member ==
+P -> PL: Propose membership change\n(promote NR to voter)
+P -> R1: Replicate config change
+P -> R2: Replicate config change
+P -> NR: Replicate config change
+R1L <- R1: Write config-change entry
+R2L <- R2: Write config-change entry
+NRL <- NR: Write config-change entry
+R1 --> P: Ack
+R2 --> P: Ack
+NR --> P: Ack
+P -> PL: Commit final configuration
+note over P,NR
+NR promoted to full voting member
+Cluster = {P,R1,R2,NR}
+end note
+
+== Normal operation continues ==
+
+@enduml
+```
+
+</details>
+
+<details>
+   
+<summary>UML code for Replica removal</summary>
+
+```
+@startuml
+actor Client
+participant "Primary" as P
+participant "Replica 1" as R1
+participant "Replica 2" as R2
+participant "Replica 3 (to be removed)" as R3
+database "Primary Log" as PL
+database "Replica 1 Log" as R1L
+database "Replica 2 Log" as R2L
+database "Replica 3 Log" as R3L
+
+== Removal Request ==
+Client -> P: CLUSTER REMOVENODE R3
+note over P: Validate request (node exists, not leader, quorum available)
+
+== Phase 1: Propose Joint Configuration ==
+P -> PL: Propose config change\n(old + new minus R3)
+P -> R1: Replicate config-change entry
+P -> R2: Replicate config-change entry
+R1L <- R1: Write config-change entry
+R2L <- R2: Write config-change entry
+R1 --> P: Ack
+R2 --> P: Ack
+P -> PL: Commit new configuration
+note over P,R2: Cluster committed config excluding R3
+
+== Phase 2: Notify and Detach ==
+P -> R3: CLUSTER FORGET <self>\n(stop replication)
+R3 -> R3L: Flush and close Raft session
+R3 -> R3: Transition to standalone (non-member)
+note over R3: Node R3 removed from cluster\nand can be safely shut down
+
+== Phase 3: Continue normal operations ==
+@enduml
+```
 </details>
