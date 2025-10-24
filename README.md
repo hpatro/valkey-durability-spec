@@ -59,26 +59,42 @@ Upon receiving a write:
 3. The client response is blocked until quorum acknowledgment confirms that the entry is durably replicated and committed.
 
 This design allows the system to continue command execution and replication in parallel, while ensuring that clients only receive success once durability is guaranteed.
- If the leader fails before quorum commit, uncommitted entries are rolled back or overwritten during recovery.
- Followers apply committed entries strictly in log index order, ensuring deterministic state across replicas.
+If the leader fails before quorum commit, uncommitted entries are rolled back or overwritten during recovery.
+Followers apply committed entries strictly in log index order, ensuring deterministic state across replicas.
 
 ### Blocking
 
 Blocking determines when a client receives acknowledgment for an operation relative to its durability state.
- While the leader applies a command immediately to its in-memory state, the client response is held until the entry is confirmed by the configured durability mode. This ensures that acknowledgment semantics always reflect the intended durability guarantees. The client remains blocked until a quorum of replicas (**synchronous mode**) acknowledges the log entry, guaranteeing durability against minority or single-node failures.
+While the leader applies a command immediately to its in-memory state, the client response is held until the entry is confirmed by the configured durability mode. This ensures that acknowledgment semantics always reflect the intended durability guarantees. The client remains blocked until a quorum of replicas (**synchronous mode**) acknowledges the log entry, guaranteeing durability against minority or single-node failures.
 
 Blocking occurs only at the primary. Replica nodes apply entries passively as they are received and do not block client operations directly.
 Read operations and other non-durable commands are not affected by blocking behavior.
 
 Notes:
+
 We could make the blocking mode configurable in the future and introduce two additional modes:
 
 - **Asynchronous mode:** The client receives acknowledgment immediately after the leader applies the command locally. This mode prioritizes latency over durability.
 - **Semi-synchronous mode:** The client is unblocked once at least one replica acknowledges the log entry, providing a balance between durability and performance.
 
-### Write-ahead logging
+#### Memory Pressure from client output buffers
 
-Writes out the command to be executed durably across the system and then executes the operation on primary and further instructs the replica to execute the operation.
+Under high pressure of write load or when replicas fall behind, the number of blocked clients can grow significantly, leading to increased memory pressure on the primary. Each blocked client consumes memory for pending responses on the output buffers. This will capped by the existing configuration of client-output-buffer-limit for replica (replication buffer limit). 
+
+Open Questions:
+
+* Should a mechanism be introduced to temporarily block all new write traffic once the replication buffer limit is reached, effectively stalling writes until the backlog is cleared? This could prevent unbounded memory growth and avoid triggering failover operations caused by memory exhaustion. 
+* Should we perform a side channel heartbeat (AppendEntries with no content) to keep the primary healthy?
+
+### Logging
+
+The logging subsystem forms the backbone of durability in this specification. Every write operation is recorded in a replicated, append-only log that defines a total, ordered sequence of commands within each shard. This log is responsible for guaranteeing that once an entry is committed, it can be recovered, replayed, and applied consistently across all replicas. It also serves as the basis for replication (through RAFT’s AppendEntries), leader election safety, and fault recovery.
+
+The integration between the log and Valkey’s in-memory execution model can follow two distinct approaches
+
+#### Write-Ahead Logging
+
+In the write-ahead logging approach, every command is first recorded in the replicated RAFT log before any modification is made to the in-memory state. This ensures that the log always represents the authoritative record of intended changes, allowing recovery to replay committed entries deterministically after failure.
 
 #### Pro(s)
 
@@ -87,24 +103,44 @@ Writes out the command to be executed durably across the system and then execute
 
 #### Con(s)
 
-1. Commands with random operation like `SPOP` and Lua scripts without predefined keys can’t be handled.
-2. Commands with blocking operation needs special handling.
+1. Commands with random operation like `SPOP` needs to be made deterministic across all the nodes in a shard.
+2. Lua scripts cannot be safely supported under write-ahead logging because their read and write sets are only known during execution. Since WAL requires the command to be logged before execution, it cannot capture the dynamic side effects or conditional logic inside a script.
+3. Commands with blocking operation needs special handling 
 
-### Write-behind logging (Recommended)
+#### Write-Behind logging (Recommended)
 
-Modifies the data on in-memory view of primary first and then performs the logging operation across a quorum of nodes.
+In the write-behind logging approach, a command is first applied to the primary’s in-memory state before being appended to the replicated RAFT log. This is inline with the current asynchronous replication model. This allows command execution and replication to proceed in parallel, maintaining Valkey’s low-latency characteristics while still ensuring durability through delayed acknowledgment.
 
 #### Pro(s)
 
-1. Handles all operation (regular commands, random commands, blocking commands) in straight forward approach.
-2. Piggyback on blocking code infrastructure to handle writes.
+1. Handles all operation (regular commands, random commands, blocking commands) in straight forward approach. `SPOP` gets translated to `SREM` making it a deterministic command.
+2. Lua scripts fit well with Write-behind logging since the script executes atomically on the primary before replication.
+   The primary runs the entire script, producing a deterministic sequence of writes that can then be logged and replicated to followers.
 
 #### Con(s)
 
 1. Blocks the key for both read/write operation until the operation has been durably stored across the shard.
-2. Failover on failure write operation going through.
+2. Introduces challenges to handle uncommitted entries due to node failures leading to potential failover operation and replaying the data to sync.
 
-## How to structure the durably logging component in Valkey?
+##### Side-by-Side Comparison 
+
+| Stage                | Write-Ahead Logging      | Write-Behind Logging       |
+| -------------------- | ------------------------ | -------------------------- |
+| 1. Receive command   | Append to log, replicate | Apply to memory, replicate |
+| 2. Wait for quorum   | Before execution         | Before acknowledgment      |
+| 3. Apply to memory   | After quorum             | Already done               |
+| 4. Respond to client | After apply              | After quorum               |
+
+| Aspect                                                       | Write-Ahead Logging (WAL)                                    | Write-Behind Logging (WBL)                                   |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| Latency                                                      | Similar client-visible latency                               | Similar client-visible latency                               |
+| Lua Scripts                                                  | Not supported. The write set is unknown before execution, making it impossible to log deterministically in advance. | Fully supported. Scripts execute atomically on the leader, and resulting writes are logged and replicated deterministically. |
+| Random / Non-Deterministic Commands (e.g., `SPOP`, time-dependent logic) | Difficult to reproduce deterministically across replicas; unsafe under WAL. | Safe, since the command executes once on the leader and replicas only replay the deterministic result. |
+| Expiration / TTL Handling                                    | Must log expiration events before applying them; can cause drift if clocks differ. | Similar to current Valkey behavior. Expirations are handled locally after commit and replicated as deterministic deletion. |
+| Eviction (LRU/LFU)                                           | Harder to synchronize across replicas since memory changes occur only post-commit, eviction triggers may diverge. | Similar to current Valkey behavior. replicas eventually converge through state updates from primary. |
+| Memory Pressure                                              | Lower runtime memory pressure because commands are not applied until committed; smaller transient state. | Higher memory pressure under replication lag, as unacknowledged writes and blocked client buffers accumulate. |
+
+#### How to structure the durably logging component in Valkey?
 
 ### Durable engine embedded within Valkey
 
@@ -120,9 +156,34 @@ Modifies the data on in-memory view of primary first and then performs the loggi
 1. Requires building synchronous replication or quorum based replication system.
 2. More overlap of asynchronous replication and synchronous replication system.
 
+#### Main thread vs Background thread
+
+### Main Thread
+
+- Logging and replication are handled directly within Valkey’s primary event loop.
+- Commands, log appends, and replication I/O share the same execution path and scheduling.
+- Log ordering is inherently aligned with command execution order.
+- Simplifies correctness and state management since all actions occur on a single thread.
+- Replication acknowledgment and client blocking are managed within the same loop cycle.
+- Suitable for environments where predictability and deterministic command sequencing are more important than full CPU utilization.
+
+### Dedicated Logging Thread
+
+- The main thread executes commands and enqueues log entries for a background replication/logging thread.
+- The logging thread manages replication, quorum acknowledgment, and commit advancement asynchronously.
+- Communication between the main thread and logging thread occurs via a bounded, ordered queue.
+- Avoids stalling issues with long running command execution/LUA script execution 
+- Requires coordination between main thread and logging thread about offset progress.
+- Could extend the io threads framework used primarily for networking.
+
 Open Questions:
 
-1. Should we consider an approach for initial release to allow the logging component to be available as in-memory instead of maintaining it on disk? This mechanism would allow higher throughput. Need to ponder about the risks/recovery time.
+1. Should we start with same thread for end-to-end operation for P0 and then move to further improvements?
+1. Should we consider an approach for initial release to allow the logging component to be available as in-memory instead of fsync it on disk? This mechanism would allow higher throughput and lower latency. Need to ponder about the risks/recovery time on node failure to perform a full synchronization.
+
+### Log File Format
+
+
 
 ## Workflows
 
@@ -177,6 +238,10 @@ Complete write outage in a shard can be observed when quorum isn’t possible to
 
 ![Write Outage](assets/CompleteWriteOutage.png)
 
+### Expiration
+
+### Eviction
+
 ### Cluster
 
 Clustering is composed of three intertwined mechanisms:
@@ -201,11 +266,15 @@ To be filled
 
 No impact on ACL
 
-### Additional Configs
-
-* Name: `shard-nodes` Value: Multiple ip address and port (comma separated)
-
 ## Appendix
+
+### Alternative Design with centralized log storage
+
+This approach is different from the recommendation above with decoupling the durable storage component from the Valkey in-memory store engine.
+
+![Centralized Storage approach](assets/Alternative-HLD.png)
+
+
 
 ### UML code for bootstrap
 
