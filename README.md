@@ -271,6 +271,8 @@ The clusterbus can still be repurposed for topology gossip across shards. This i
 
 Keyspace notification also needs to be buffered on the client output buffer subscribed via pub/sub channels and the client is blocked until quorum is reached for a given key modification based on the offset. The notification will be sent out once the key has been committed on the primary. Keyspace notifications aren't generated on replicas.
 
+> Note: Based on the speculative execution of the command on the primary, it's possible to send out notification (pre commit and post commit) which might be handy for modules to also perform speculative operation like search module can trigger index update operation in parallel with the data getting durably logged across the quourum of nodes.
+
 ### Snapshots
 
 RDB persistence performs point-in-time snapshots of your dataset at specified intervals. This mechanism will exists for backups. This will have the same format which exists.
