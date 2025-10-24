@@ -70,12 +70,12 @@ While the leader applies a command immediately to its in-memory state, the clien
 Blocking occurs only at the primary. Replica nodes apply entries passively as they are received and do not block client operations directly.
 Read operations and other non-durable commands are not affected by blocking behavior.
 
-Notes:
-
-We could make the blocking mode configurable in the future and introduce two additional modes:
-
-- **Asynchronous mode:** The client receives acknowledgment immediately after the leader applies the command locally. This mode prioritizes latency over durability.
-- **Semi-synchronous mode:** The client is unblocked once at least one replica acknowledges the log entry, providing a balance between durability and performance.
+> Note:
+>
+> We could make the blocking mode configurable in the future and introduce two additional modes:
+>
+> * **Asynchronous mode:** The client receives acknowledgment immediately after the leader applies the command locally. This mode prioritizes latency over durability.
+> * **Semi-synchronous mode:** The client is unblocked once at least one replica acknowledges the log entry, providing a balance between durability and performance.
 
 #### Memory Pressure from client output buffers
 
@@ -176,14 +176,10 @@ In the write-behind logging approach, a command is first applied to the primaryâ
 - Requires coordination between main thread and logging thread about offset progress.
 - Could extend the io threads framework used primarily for networking.
 
-Open Questions:
-
-1. Should we start with same thread for end-to-end operation for P0 and then move to further improvements?
-1. Should we consider an approach for initial release to allow the logging component to be available as in-memory instead of fsync it on disk? This mechanism would allow higher throughput and lower latency. Need to ponder about the risks/recovery time on node failure to perform a full synchronization.
-
-### Log File Format
-
-
+>  Note:
+>
+> * We should start with same thread for end-to-end operation for P0 and then move to further improvements.
+> * Should we consider an approach for initial release to allow the logging component to be available as in-memory instead of fsync it on disk? This mechanism would allow higher throughput and lower latency. Need to assess the risks/recovery time on node failure to perform a full synchronization from the primary and it's affect on failure to reach quorum.
 
 ## Workflows
 
@@ -238,9 +234,25 @@ Complete write outage in a shard can be observed when quorum isnâ€™t possible to
 
 ![Write Outage](assets/CompleteWriteOutage.png)
 
-### Expiration
+## Impact on sub components
 
-### Eviction
+### ACL
+
+No impact on ACL
+
+### AOF
+
+Append Only File (AOF) logs every write operation received by the server. This will co-exist for single node durability system and to be backward compatible reasons for Valkey users. As part of the low level design we will plan to reuse or refactor components for the durable log system.
+
+### Asychronous Replication
+
+Asynchronous replication system will co-exist with the synchronous replication system to allow users to use Valkey with high availability but not high durable system i.e. backward compatible in terms of performance/behavior. As part of the low level design we will plan to reuse or refactor components for the synchronous replication system.
+
+### Atomic Slot Migration
+
+This should mostly remain the same however the two phase commit and change in topology needs to be added as metdata to the RAFT log.
+
+> Note: Multi shard cluster is not part of P0.
 
 ### Cluster
 
@@ -250,31 +262,28 @@ Clustering is composed of three intertwined mechanisms:
 2. **Health/Failure Detection**
 3. **Failover Operation**
 
-With RAFT introduced at the shard level, consensus is built in for durable data transfer within each shard. RAFT also manages leader election through regular heartbeats: when a leader fails, a new candidate from within the shard is promoted.
-This RAFT-based leader failure detection overlaps heavily with the existing clusterbus health detection and best-effort failover systems. To avoid duplication, both of those must be disabled.
-The **clusterbus** can still be repurposed for topology gossip across shards. This introduces only minimal overhead and does not affect shard ownership. It remains useful for client redirection of datapath commands (read/write operations).
+With RAFT introduced at the shard level, consensus is built in for durable data transfer within each shard. RAFT also manages leader election through regular heartbeats: when a leader fails, a new candidate from within the shard is promoted. This RAFT-based leader failure detection overlaps heavily with the existing clusterbus health detection and best-effort failover systems. To avoid duplication, both of those must be disabled.
+The clusterbus can still be repurposed for topology gossip across shards. This introduces only minimal overhead and does not affect shard ownership. It remains useful for client redirection of datapath commands (read/write operations).
 
-### Asychronous Replication
+> Note: If we decide to not support cluster-enabled mode in P0 we could punt the work of modularization of health detection/failover for later period.
 
-Asynchronous replication system will co-exist with the synchronous replication system to allow users to use Valkey with high availability but not high durable system i.e. backward compatible in terms of performance/behavior.
+### Keyspace notifications
 
-### LUA Scripts
+Keyspace notification also needs to be buffered on the client output buffer subscribed via pub/sub channels and the client is blocked until quorum is reached for a given key modification based on the offset. The notification will be sent out once the key has been committed on the primary. Keyspace notifications aren't generated on replicas.
 
-To be filled
+### Snapshots
 
-### ACL
-
-No impact on ACL
+RDB persistence performs point-in-time snapshots of your dataset at specified intervals. This mechanism will exists for backups. This will have the same format which exists.
 
 ## Appendix
 
-### Alternative Design with centralized log storage
+### Alternative design with decoupled log storage
 
-This approach is different from the recommendation above with decoupling the durable storage component from the Valkey in-memory store engine.
+This approach is different from the recommendation above with decoupling the durable storage component from the Valkey in-memory store engine. The key benefit with this proposal is that the shard can have 1 primary and 1 replica setup and don't need RAFT consensus model at shard level. It allows the primary to maintain lease with (distributed) durable log engine and failover if the lease expires. 
+
+The key challenge with the proposal is it leads to a different deployment architecture and will make it complex for users to maintain two separate components.
 
 ![Centralized Storage approach](assets/Alternative-HLD.png)
-
-
 
 ### UML code for bootstrap
 
