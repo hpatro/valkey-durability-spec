@@ -277,6 +277,19 @@ Keyspace notification also needs to be buffered on the client output buffer subs
 
 RDB persistence performs point-in-time snapshots of your dataset at specified intervals. This mechanism will exists for backups. This will have the same format which exists.
 
+## Contributors
+
+This document is a collaborative effort across multiple individuals and companies. The individuals (lexicographic ordering by first name) named below helped with active discussions and brainstorming.
+
+1. Jules Lasarte (AWS)
+2. Kevin Mcgehee (AWS)
+3. Madelyn Olson (AWS)
+4. Ping Xie (Google)
+5. Ricardo Dias (Percona)
+6. Viktor Soderqvist (Ericsson)
+
+Pardon me if I accidentally missed out people's name (send me a DM, I will get it updated)
+
 ## Appendix
 
 ### Alternative design with decoupled log storage
