@@ -42,10 +42,10 @@ Elections are managed using RAFT’s randomized timeout and term-based voting me
 
 There are a few major parts to Valkey to be modified to add durability support.
 
-1. Command execution
+1. Command execution (in-memory view)
 2. Blocking
 3. Logging
-4. Topology changes
+4. Topology
 
 ### Command Execution
 
@@ -181,18 +181,29 @@ In the write-behind logging approach, a command is first applied to the primary�
 > * We should start with same thread for end-to-end operation for P0 and then move to further improvements.
 > * Should we consider an approach for initial release to allow the logging component to be available as in-memory instead of fsync it on disk? This mechanism would allow higher throughput and lower latency. Need to assess the risks/recovery time on node failure to perform a full synchronization from the primary and it's affect on failure to reach quorum.
 
-## Workflows
+## Topology
 
-### Cluster Bootstrap ([UML code](#uml-code-for-bootstrap))
+Topology management within the durability specification is governed by the RAFT consensus model. Each shard operates as an independent RAFT group, and all membership change such as adding or removing replicas are handled as configuration change entries in the RAFT log. This ensures that updates to the shard topology are serialized, replicated, and committed like any other operation, maintaining a consistent and deterministic view of membership across all nodes.
+
+When a new node joins, the leader initiates a configuration change proposal, replicates it to the quorum, and applies it once committed. Removal follows the same mechanism, guaranteeing that no two conflicting configurations exist concurrently. RAFT’s consensus approach is used during reconfiguration to safely transition between old and new membership sets, avoiding split-brain conditions.These configuration entries are replicated through the same log pipeline as normal commands, ensuring that both data and topology are part of the same durable mechanism.
+
+Here we cover various operation via sequence diagram within a shard.
+
+1. Bootstrap
+2. Node addition
+3. Primary removal
+4. Replica removal
+
+### Bootstrap ([UML code](#uml-code-for-bootstrap))
 
 ![Bootstrap](assets/ClusterBootstrap.png)
 
-##### Points to consider:
-
-* How to discover peer nodes?
-  * New nodes establish connection between each other via the `shard-nodes` config which is a list of ip:port address.
-* When to start the initialization phase?
-  * When the node is connected to majority of the nodes.
+> Note:
+>
+> * How to discover peer nodes? 
+>   * We can't reuse the `REPLICAOF` mechanism as we intend to piggyback on RAFT's consensus model for leader election.
+>   * Hence, new nodes can discover peers via the `shard-nodes` config which is a list of ip:port address.
+> * When to start the initialization phase? - To be added
 
 ### Node addition([UML Code](#uml-code-for-node-addition))
 
@@ -230,7 +241,7 @@ Has the same behavior as replica removal outlined earlier in the topology change
 
 ### Complete Write Outage ([UML Code](#uml-code-for-write-outage))
 
-Complete write outage in a shard can be observed when quorum isn’t possible to reach for a write operation. This could be due to network partition for a period exceeding the timeout period of a client and the operation result couldn't be acknowledged back to the client. This would leave the primary dirty and in an inconsistent state. Hence, it's require
+Complete write outage in a shard can be observed when quorum isn’t possible to reach for a write operation. This could be due to network partition for a period exceeding the timeout period of a client and the operation result couldn't be acknowledged back to the client. This would leave the primary dirty and in an inconsistent state. Hence, it's required to perform a failover and replay the local log upto the committed entries on the new primary to stabilize the node.
 
 ![Write Outage](assets/CompleteWriteOutage.png)
 
@@ -263,7 +274,7 @@ Clustering is composed of three intertwined mechanisms:
 3. **Failover Operation**
 
 With RAFT introduced at the shard level, consensus is built in for durable data transfer within each shard. RAFT also manages leader election through regular heartbeats: when a leader fails, a new candidate from within the shard is promoted. This RAFT-based leader failure detection overlaps heavily with the existing clusterbus health detection and best-effort failover systems. To avoid duplication, both of those must be disabled.
-The clusterbus can still be repurposed for topology gossip across shards. This introduces only minimal overhead and does not affect shard ownership. It remains useful for client redirection of datapath commands (read/write operations).
+The cluster bus can still be repurposed for topology gossip across shards. This introduces only minimal overhead and does not affect shard ownership. It remains useful for client redirection of datapath commands (read/write operations).
 
 > Note: If we decide to not support cluster-enabled mode in P0 we could punt the work of modularization of health detection/failover for later period.
 
@@ -272,6 +283,10 @@ The clusterbus can still be repurposed for topology gossip across shards. This i
 Keyspace notification also needs to be buffered on the client output buffer subscribed via pub/sub channels and the client is blocked until quorum is reached for a given key modification based on the offset. The notification will be sent out once the key has been committed on the primary. Keyspace notifications aren't generated on replicas.
 
 > Note: Based on the speculative execution of the command on the primary, it's possible to send out notification (pre commit and post commit) which might be handy for modules to also perform speculative operation like search module can trigger index update operation in parallel with the data getting durably logged across the quourum of nodes.
+
+### Pub/Sub
+
+Pub/Sub in standalone setup uses replication link to transfer the data to replicas and in cluster-enabled setup uses the cluster-bus link to transfer data within shard as well as across shard. There shouldn't be any change in mechanism around Pub/Sub.
 
 ### Snapshots
 
