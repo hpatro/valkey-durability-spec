@@ -212,7 +212,7 @@ Open Questions:
 
 ### Lifecycle of a write command ([UML Code](#uml-code-for-lifecycle-of-a-write-command))
 
-![Lifecycle of a write command](assets/WriteCommand.png)
+![Lifecycle of a write command](assets/WriteCommand.svg)
 
 ### Lifecycle of a read command ([UML Code](#UML-code-for-lifecycle-of-a-read-command))
 
@@ -569,7 +569,13 @@ database "Replica 2 Log" as R2L
 autonumber
 Client -> P: Write operation on key K
 P -> P: Execute operation
-note right of P: Block key K
+
+note right of P
+Add response to client buffer
+Block the client write handler 
+until replication offset reaches X
+end note
+
 P -> PL: Durably log operation
 P -> P: Add to durable stream
 note right of P: After certain period/operations
@@ -577,16 +583,19 @@ P -> R1: Replicate operations
 P -> R2: Replicate operations
 R1 -> R1L: Durably log operation
 R2 -> R2L: Durably log operation
-R1 -> P: Acknowledge up to offset
-note right of P: Have quorum upto offset X
+R1 -> P: Ack the durable write upto offset X
+R2 -> P: Ack the durable write upto offset X
+note right of P
+Quorum reached
+upto offset X
+end note
 P -> Client: Write response
-P -> R2 : Acknowledge up to X offset
-P -> R1: Update offset committed to X
+P -> R1 : Ack the commit of operation upto X
 R1 -> R1: Execute operation
 note over P, R1: Same view across Primary and Replica 1
-P -> R2: Update offset committed to X
+P -> R2 : Ack the commit of operation upto X
 R2 -> R2: Execute operation
-note over P, R2: All have the same view for key K
+note over P, R2: All the nodes have the same view for key K
 @enduml
 ```
 
