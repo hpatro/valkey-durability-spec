@@ -225,13 +225,20 @@ Here we cover various operation via sequence diagram within a shard.
 
 ![#UML-code-for-lifecycle-of-a-read-command](assets/ReadCommand.png)
 
-## Failure Modes
+## Failure Handling
 
 ### Primary liveness ([UML Code](#uml-code-for-leader-liveness))
+
+The primary maintains liveness through periodic heartbeat messages sent to all replicas within the shard.
+These heartbeats are implemented as empty `AppendEntries` RPCs and serve to assert the leader’s authority, prevent election timeouts on followers, and detect connectivity issues early.
 
 ![Lifecycle of heartbeat](assets/Heartbeat.png)
 
 ### Primary Failure (Automatic Failover) ([UML Code](#uml-code-for-primary-failure))
+
+If a replica fails to receive heartbeats within its election timeout window, it transitions to a candidate state and initiates a new term election. This mechanism ensures continuous availability and timely leader re-election in the presence of network delays or partial failures, without requiring an administrator/operator involvement.
+
+Election timeouts for followers are randomized within a bounded range to prevent multiple replicas from starting elections simultaneously (similar to Valkey decentralized cluster mechanism). This randomness reduces the likelihood of split votes and ensures that one candidate reaches the quorum and leadership is restored, enabling writes to resume. During an election, replicas grant their vote only to candidates whose logs are at least as up-to-date as their own, guaranteeing that any newly elected leader always possesses the most complete log.
 
 ![PrimaryFailure](assets/PrimaryFailure.svg)
 
