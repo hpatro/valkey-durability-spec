@@ -1,4 +1,4 @@
-# Durability HLD
+# Durability High Level Design Document
 
 This document is a working draft of the high level architecture of durability and will transfer to RFC once all the co-authors are inline with the design.
 
@@ -140,9 +140,13 @@ In the write-behind logging approach, a command is first applied to the primary�
 | Eviction (LRU/LFU)                                           | Harder to synchronize across replicas since memory changes occur only post-commit, eviction triggers may diverge. | Similar to current Valkey behavior. replicas eventually converge through state updates from primary. |
 | Memory Pressure                                              | Lower runtime memory pressure because commands are not applied until committed; smaller transient state. | Higher memory pressure under replication lag, as unacknowledged writes and blocked client buffers accumulate. |
 
-#### How to structure the durably logging component in Valkey?
+#### Log Compaction ([UML Code](#uml-code-for-log-compaction))
 
-### Durable engine embedded within Valkey
+Log compaction is the process of truncating old, committed log entries that are no longer required for recovery, replacing them with a compact snapshot of the current state. This ensures that the replicated log remains bounded in size, preventing unbounded memory growth and reducing catch-up time for lagging replicas.
+
+![Log Compaction](assets/LogCompaction.svg)
+
+### Logging embedded within Valkey
 
 ![Single Shard View](https://github.com/user-attachments/assets/c01bc808-9811-450c-a143-ee9eedf0b0a3)
 
@@ -238,13 +242,22 @@ These heartbeats are implemented as empty `AppendEntries` RPCs and serve to asse
 
 If a replica fails to receive heartbeats within its election timeout window, it transitions to a candidate state and initiates a new term election. This mechanism ensures continuous availability and timely leader re-election in the presence of network delays or partial failures, without requiring an administrator/operator involvement.
 
-Election timeouts for followers are randomized within a bounded range to prevent multiple replicas from starting elections simultaneously (similar to Valkey decentralized cluster mechanism). This randomness reduces the likelihood of split votes and ensures that one candidate reaches the quorum and leadership is restored, enabling writes to resume. During an election, replicas grant their vote only to candidates whose logs are at least as up-to-date as their own, guaranteeing that any newly elected leader always possesses the most complete log.
+Election timeouts for followers are randomized within a bounded range to prevent multiple replicas from starting elections simultaneously (similar to Valkey decentralized cluster election mechanism). This randomness reduces the likelihood of split votes and ensures that one candidate reaches the quorum and leadership is restored, enabling writes to resume. During an election, replicas grant their vote only to candidates whose logs are at least as up-to-date as their own, guaranteeing that any newly elected leader always possesses the most complete log.
 
 ![PrimaryFailure](assets/PrimaryFailure.svg)
 
 ### Replica Failure
 
 Has the same behavior as replica removal outlined earlier in the topology change section.
+
+### Slow or Lagging Replica
+
+When a replica falls behind the primary due to network delays or busy engine, the leader continues to serve write traffic as long as quorum of replicas are responsive.
+The leader tracks replication progress per follower using `nextIndex` and `matchIndex` values, retrying missing `AppendEntries` messages to help the slow replica catch up incrementally.
+If the lag grows beyond the range of the leader’s active log (for example, after compaction), the leader installs a state snapshot to synchronize the follower with the latest committed state.
+Throughout this process, slow replicas are excluded from quorum calculations, ensuring that cluster availability is not affected. Once synchronization completes, the replica resumes normal replication and re-enters the commit path without requiring manual intervention.
+
+![Slow or Lagging Replica](assets/SlowReplica.svg)
 
 ### Complete Write Outage ([UML Code](#uml-code-for-write-outage))
 
@@ -321,6 +334,35 @@ This approach is different from the recommendation above with decoupling the dur
 The key challenge with the proposal is it leads to a different deployment architecture and will make it complex for users to maintain two separate components.
 
 ![Centralized Storage approach](assets/Alternative-HLD.png)
+
+### UML code for log compaction
+
+```
+@startuml
+participant "Primary" as P
+database "Primary Log" as PL
+database "Snapshot File" as SF
+participant "Replica 1" as R1
+participant "Replica 2" as R2
+
+== Snapshot Creation ==
+P -> P: Serialize in-memory state
+P -> SF: Write snapshot (state, index, term, metadata)
+note right of SF: Includes lastIncludedIndex\nand cluster metadata
+
+== Log Truncation ==
+P -> PL: Truncate log up to lastIncludedIndex
+note over PL: Retain only recent entries\nfor future replication
+
+== Snapshot Advertisement ==
+P -> R1: AppendEntries / InstallSnapshot\n(advertise snapshot index)
+P -> R2: AppendEntries / InstallSnapshot\n(advertise snapshot index)
+R1 --> P: Acknowledge
+R2 --> P: Acknowledge
+note over P,R2: Followers can request snapshot\nif behind compaction point
+@enduml
+
+```
 
 ### UML code for bootstrap
 
@@ -598,6 +640,45 @@ loop Heartbeat interval (e.g. 150–300 ms)
   note over R1, R2: Followers reset election timeout
 end
 @enduml
+```
+
+### UML code for slow replica
+
+```
+@startuml
+participant "Primary" as P
+participant "Replica 1 (healthy)" as R1
+participant "Replica 2 (lagging)" as R2
+database "Primary Log" as PL
+database "Replica 2 Log" as R2L
+
+== Normal Replication ==
+P -> R1: AppendEntries [Log Index 100–101]
+R1 --> P: Ack (matchIndex=101)
+P -> R2: AppendEntries [Log Index 100–101]
+R2 --> P: Timeout / No Ack
+note over P,R2: Replica 2 falls behind due to network delay
+
+== Incremental Catch-Up ==
+P -> R2: Retry AppendEntries [Index 100]
+R2 --> P: Partial Ack (matchIndex=99)
+note right of P: Leader tracks R2 using nextIndex=100
+P -> R2: AppendEntries [Index 100–105]
+R2 --> P: Ack (matchIndex=105)
+note over P,R2: Replica 2 still lags significantly
+
+== Snapshot Installation ==
+P -> R2: InstallSnapshot [State up to Index 200]
+R2 -> R2L: Replace local log with snapshot state
+R2 --> P: Snapshot installed (matchIndex=200)
+note over P,R2: Replica 2 catches up via snapshot
+
+== Resume Normal Operation ==
+P -> R2: AppendEntries [Index 201–205]
+R2 --> P: Ack
+note over P,R2: All replicas now in sync
+@enduml
+
 ```
 
 ### UML code for lifecycle of a write command
