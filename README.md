@@ -14,16 +14,17 @@ To achieve this, the specification adopts a formally defined state machine repli
 
 Please refer [https://github.com/valkey-io/valkey-rfc/pull/29/](https://github.com/valkey-io/valkey-rfc/pull/29/files) for detailed requirements
 
+* Support all the existing commands in Valkey.
 * Server level durability configuration - Valkey must allow enabling/disabling durability mode at startup.
 * Read Committed isolation level - Every write operation is serialized on primary and client won't see a volatile key.
 * Maintain current deployment architecture - No additional dependencies.
-* Support standalone/cluster(single shard) modes.  
+* Support standalone mode.
 * Support a minimum 3 node configuration - one primary and two (or more) replicas.
 
-Planned for future:
+Planned for future (non-exhaustive):
 
 * Dirty reads and configurable isolation level
-* Multi shard durability - Allow scaling of writes.
+* cluster-enabled mode/multi shard durability - Allow scaling of writes.
 * Two node durability configuration (one primary and one replica)
 
 ## Design Overview
@@ -137,6 +138,8 @@ In the write-behind logging approach, a command is first applied to the primaryâ
 | Expiration / TTL Handling                                    | Must log expiration events before applying them; can cause drift if clocks differ. | Similar to current Valkey behavior. Expirations are handled locally after commit and replicated as deterministic deletion. |
 | Eviction (LRU/LFU)                                           | Harder to synchronize across replicas since memory changes occur only post-commit, eviction triggers may diverge. | Similar to current Valkey behavior. replicas eventually converge through state updates from primary. |
 | Memory Pressure                                              | Lower runtime memory pressure because commands are not applied until committed; smaller transient state. | Higher memory pressure under replication lag, as unacknowledged writes and blocked client buffers accumulate. |
+
+With all the complexity outlined above for WAL mechanism in supporting all the existing functionality with durability, the plan is to proceed with write-behind logging to keep the implementation layer simple and broadly inline with the current design of Valkey where the operation execution is followed by replication.
 
 #### Log Compaction ([UML Code](./assets/UML.md#uml-code-for-log-compaction))
 
@@ -294,7 +297,7 @@ Clustering is composed of three intertwined mechanisms:
 With RAFT introduced at the shard level, consensus is built in for durable data transfer within each shard. RAFT also manages leader election through regular heartbeats: when a leader fails, a new candidate from within the shard is promoted. This RAFT-based leader failure detection overlaps heavily with the existing clusterbus health detection and best-effort failover systems. To avoid duplication, both of those must be disabled.
 The cluster bus can still be repurposed for topology gossip across shards. This introduces only minimal overhead and does not affect shard ownership. It remains useful for client redirection of datapath commands (read/write operations).
 
-> Note: If we decide to not support cluster-enabled mode in P0 we could punt the work of modularization of health detection/failover for later period.
+> Note: If we decide not to support cluster-enabled mode in P0 we could punt the work of modularization of health detection/failover for later period.
 
 ### Keyspace notifications
 
@@ -325,14 +328,6 @@ Pardon me if I accidentally missed out people's name (send me a DM, I will get i
 
 ## Appendix
 
-### Alternative design with decoupled log storage
-
-This approach is different from the recommendation above with decoupling the durable storage component from the Valkey in-memory store engine. The key benefit with this proposal is that the shard can have 1 primary and 1 replica setup and don't need RAFT consensus model at shard level. It allows the primary to maintain lease with (distributed) durable log engine and failover if the lease expires. 
-
-The key challenge with the proposal is it leads to a different deployment architecture and will make it complex for users to maintain two separate components.
-
-![Centralized Storage approach](assets/Alternative-HLD.png)
-
-### UML Code
-
-All the UML code can be found under [./assets/UML.md](./assets/UML.md)
+1. Requirements - https://github.com/valkey-io/valkey-rfc/pull/29/
+2. RAFT - In Search of an Understandable Consensus Algorithm https://raft.github.io/raft.pdf
+3. All the UML based sequence diagram code can be found under [./assets/UML.md](./assets/UML.md)
